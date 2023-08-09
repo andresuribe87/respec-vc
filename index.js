@@ -33,39 +33,53 @@ function xmlDateTimeToUnixTimestamp(xmlDateTime) {
 
 // transform the input credential to a JWT
 async function transformToJwt({credential, kid, jwk}) {
-  const header = {alg: 'ES256', typ: 'JWT'};
-  const payload = {
-    vc: credential
-  };
-  if(credential.expirationDate) {
-    payload.exp = xmlDateTimeToUnixTimestamp(credential.expirationDate);
-  }
-  if(credential.issuer) {
-    payload.iss = credential.issuer;
-  }
-  if(credential.issuanceDate) {
-    payload.nbf = xmlDateTimeToUnixTimestamp(credential.issuanceDate);
-  }
-  if(credential.id) {
-    payload.jti = credential.id;
-  }
-  if(credential.credentialSubject.id) {
-    payload.sub = credential.credentialSubject.id;
-  }
+  const alg = 'ES384';
+  const timestampMillis = Date.now();
+  const timestampSeconds = Math.floor(timestampMillis / 1000);
 
+  let header = { alg };
+  const claimset = credential;
+  let iss;
+  if (credential.issuer){
+    iss = claimset.issuer.id ? claimset.issuer.id : claimset.issuer;
+    header.typ = `vc+ld+jwt`;
+    header.iss = iss;
+    header.iat = timestampSeconds
+  }
+  if (credential.holder){
+    iss = claimset.holder.id ? claimset.holder.id : claimset.holder;
+    header.typ = `vp+ld+jwt`;
+    header.iss = iss;
+    header.iat = timestampSeconds
+    header.nonce = "n-0S6_WzA2Mj";
+    header.aud = "https://contoso.example";
+  }
+  if (kid === ''){
+    delete header.kid
+  }
+  header = sortHeader(header);
+  let jwt;
+  if (alg === 'none'){
+    header.typ = `vp+ld+jwt`;
+    delete header.kid
+    delete header.iat
+    delete header.nonce
+    delete header.aud
+    jwt = `${jose.base64url.encode(JSON.stringify(header))}.${jose.base64url.encode(JSON.stringify(claimset))}.`
+  } else {
+    jwt = await new jose.SignJWT(claimset)
+      .setProtectedHeader(header)
+      .sign(jwk.privateKey);
+  }
   // create the JWT description
-  let description = '---------------- JWT header ---------------\n' +
-    JSON.stringify(header, null, 2);
-  description += '\n\n--------------- JWT payload ---------------\n' +
-    '// NOTE: The example below uses a valid VC-JWT serialization\n' +
-    '//       that duplicates the iss, nbf, jti, and sub fields in the\n' +
-    '//       Verifiable Credential (vc) field.\n\n' +
-    JSON.stringify(payload, null, 2);
-  const jwt = await new jose.SignJWT(payload)
-    .setProtectedHeader(header)
-    .sign(jwk.privateKey);
-
-  return description + '\n\n--------------- JWT ---------------\n\n' + jwt;
+  return `
+---------------- Decoded ${alg === 'none' ? 'Unprotected' : 'Protected'} Header ----------------
+${JSON.stringify(header, null, 2)}
+---------------- Decoded ${alg === 'none' ? 'Unprotected' : 'Protected'} Claimset ----------------
+${JSON.stringify(claimset, null, 2)}
+---------------- Compact Encoded JSON Web Token ----------------
+${jwt}
+`
 };
 
 async function attachProof({credential, suite}) {
